@@ -87,6 +87,74 @@ has already been downloaded, then *do not* download it again."
       (download-file url dir file-name))))
 
 ;;; helper functions
+; http://stackoverflow.com/a/1942422
+(defun dictionary-lessp (str1 str2)
+  "return t if STR1 is < STR2 when doing a dictionary compare
+(splitting the string at numbers and doing numeric compare with them)"
+  (let ((str1-components (dict-split str1))
+        (str2-components (dict-split str2)))
+    (dict-lessp str1-components str2-components)))
+
+(defun dict-lessp (slist1 slist2)
+  "compare the two lists of strings & numbers"
+  (cond ((null slist1)
+         (not (null slist2)))
+        ((null slist2)
+         nil)
+        ((and (numberp (car slist1))
+              (stringp (car slist2)))
+         t)
+        ((and (numberp (car slist2))
+              (stringp (car slist1)))
+         nil)
+        ((and (numberp (car slist1))
+              (numberp (car slist2)))
+         (or (< (car slist1) (car slist2))
+             (and (= (car slist1) (car slist2))
+                  (dict-lessp (cdr slist1) (cdr slist2)))))
+        (t
+         (or (string-lessp (car slist1) (car slist2))
+             (and (string-equal (car slist1) (car slist2))
+                  (dict-lessp (cdr slist1) (cdr slist2)))))))
+
+(defun dict-split (str)
+  "split a string into a list of number and non-number components"
+  (save-match-data 
+    (let ((res nil))
+      (while (and str (not (string-equal "" str)))
+        (let ((p (string-match "[0-9]*\\.?[0-9]+" str)))
+          (cond ((null p)
+                 (setq res (cons str res))
+                 (setq str nil))
+                ((= p 0)
+                 (setq res (cons (string-to-number (match-string 0 str)) res))
+                 (setq str (substring str (match-end 0))))
+                (t
+                 (setq res (cons (substring str 0 (match-beginning 0)) res))
+                 (setq str (substring str (match-beginning 0)))))))
+      (reverse res))))
+
+(defun subset? (subset superset)
+  (if (<= (length subset) (length superset))
+      (if (null subset)
+          t
+        (when (member (car subset) superset)
+          (subset? (cdr subset) superset)))))
+
+(ert-deftest subset?-test ()
+  (should (equal (subset? '(1 2) '(1 2 4 8))
+                 t))
+  (should (equal (subset? '(1 2 3) '(1 2 4 8))
+                 nil))
+  (should (equal (subset? nil '(1 2 4 8))
+                 t)))
+
+(defun distinct (lst)
+  "Remove duplicate elements from a list, also remove any nil elements."
+  (if (and lst
+           (listp lst))
+      (delq nil (delete-dups lst))))
+
 (defun chomp (str)
   "Chomp leading and tailing whitespace from STR."
   (replace-regexp-in-string (rx (or (: bos (* (any " \t\n")))
@@ -114,13 +182,16 @@ attention to case differences."
   "Remove characters that are not allowed in an org-mode tag"
   (replace-regexp-in-string "[^a-zA-Z0-9_@]" "" s))
 
+(defun string->tag (s)
+  (kill-unacceptable-keyword-chars
+   (replace-regexp-in-string "[-\s]+"
+                             "_"
+                             (downcase s))))
+
 (defun string->keyword (s)
-  "Turn a string into an org-mode tag"
+  "Turn a string into an org-mode keyword"
   (concat ":"
-          (kill-unacceptable-keyword-chars
-           (replace-regexp-in-string "\s+"
-                                     "_"
-                                     (downcase s)))
+          (string->tag s)
           ":"))
 
 (ert-deftest string->keyword-test ()
@@ -350,6 +421,22 @@ usually aren't that good, though."
   (should (equal (nytimes.tag/keyword "Braun, Werner von")
                  ":werner_von_braun:")))
 
+;;; politico tags
+(defun politico/tags (dom)
+  (let ((match ()))
+    (dolist (child (dom-by-tag (dom-by-class dom "categories-list") 'a))
+      (push (string->tag (chomp (dom-text child))) match))
+    match))
+
+;;; rollcall tags
+(defun rollcall/tags (dom)
+  (mapcar 'string->tag
+          (split-string (dom-attr (dom-elements dom 'name "news_keywords")
+                                  'content)
+                        ",")))
+
+(rollcall/tags (html-from-file "~/news/rollcall.com/foreign-relations-divided-tillerson-tax-returns"))
+  
 ;;; news source
 ; Dispatch the methods to determine the title, published date, etc.,
 ; based on the news source...which are implemented as subclasses of
@@ -369,6 +456,9 @@ usually aren't that good, though."
 (defclass politico (news--source)
   ())
 
+(defclass rollcall (news--source)
+  ())
+
 ;; Generically, the title is given by the og:title meta tag
 (defmethod title ((s news--source) dom)
   (og-title dom))
@@ -380,9 +470,16 @@ usually aren't that good, though."
 (defmethod tags ((s nytimes) dom)
   (mapcar 'nytimes.tag/normalize (nytimes/tags dom)))
 
+(defmethod tags ((s politico) dom)
+  (politico/tags dom))
+
+(defmethod tags ((s rollcall) dom)
+  (rollcall/tags dom))
+
 ;; get the ISO 8601 date-timestamp when the article was published
 (defmethod published ((s news--source) dom)
-  (og-published dom))
+  (or (og-published dom)
+      (dom-attr (dom-by-tag dom 'time) 'datetime)))
 
 (defmethod published ((s washingtonpost) dom)
   (dom-attr (dom-elements dom 'itemprop "datePublished")
@@ -393,6 +490,10 @@ usually aren't that good, though."
 
 (defmethod published ((s politico) dom)
   (dom-attr (dom-by-tag dom 'time) 'datetime))
+
+(defmethod published ((s rollcall) dom)
+  (dom-attr (dom-elements dom 'property "article:published_time")
+            'content))
 
 ;;; news article data
 ; code to create an object holding all the relevant information for a
@@ -423,6 +524,7 @@ usually aren't that good, though."
           ((equal "nytimes.com" host) (nytimes))
           ((equal "economist.com" host) (economist))
           ((equal "politico.com" host) (politico))
+          ((equal "rollcall.com" host) (rollcall))
           (t (news--source)))))
 
 (defun make-article (url)
@@ -438,14 +540,33 @@ usually aren't that good, though."
      :url url
      :title (title source dom)
      :published (published source dom)
-     :tags (tags source dom))))
+     :tags (distinct (tags source dom)))))
+
+(defun append-org-tags (tags)
+  "When the given list of TAGS (strings) are not part of the current
+header's tags, append the distinct tags on, then alphebatically sort
+them all."
+  (when tags
+    (save-excursion
+      (org-back-to-heading)
+      (let* ((current-tags (org-element-property :tags (org-element-at-point))))
+        (when (not (subset? tags current-tags))
+          (org-set-tags-to
+           (sort
+            (distinct (append current-tags
+                              tags))
+            'dictionary-lessp)))))))
 
 (defun cite-article (url)
+  "Replace the plain-link with a fancy link, whose description is the
+article's title, followed by the URL's domain in parentheses, and then
+the publication datetime."
   (let* ((article-object (make-article url)))
     (concat "[[" url "][" (oref article-object :title) "]] "
             "(" (url-domain url) ")"
             (if (oref article-object :published)
-                (concat " <" (oref article-object :published) ">")))))
+                (concat " <" (oref article-object :published) ">")))
+    ))
 
 ;;;### autoload
 (defun expand-citations ()
@@ -456,7 +577,8 @@ usually aren't that good, though."
       (let ((remove (list (match-beginning 2) (match-end 2)))
             (description (org-match-string-no-properties 2)))
         (apply 'delete-region remove)
-        (insert (cite-article description))))))
+        (insert (cite-article description))
+        (append-org-tags (oref (make-article description) :tags))))))
 
 (provide 'dsf-news)
 ;;; news.el ends here
