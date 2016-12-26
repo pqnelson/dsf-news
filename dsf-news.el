@@ -16,10 +16,10 @@
 ;;
 ;; So you may just copy/paste a bunch of links into your org-file, e.g.
 ;;
-* killer flying robots
-- http://www.politico.com/story/2016/12/drones-military-technology-trump-232933
-* Cartoons
-- https://www.washingtonpost.com/lifestyle/the-story-behind-the-sudden-cancellation-of-adult-swims-trump-loving-comedy-show/2016/12/23/ed9e2e3a-c3c8-11e6-8422-eac61c0ef74d_story.html?utm_term=.873331ea8217
+;; * killer flying robots
+;; - http://www.politico.com/story/2016/12/drones-military-technology-trump-232933
+;; * Cartoons
+;; - https://www.washingtonpost.com/lifestyle/the-story-behind-the-sudden-cancellation-of-adult-swims-trump-loving-comedy-show/2016/12/23/ed9e2e3a-c3c8-11e6-8422-eac61c0ef74d_story.html?utm_term=.873331ea8217
 ;;
 ;; Then running the magic `expand-citations' command will transform this
 ;; into
