@@ -464,27 +464,28 @@ usually aren't that good, though."
   ())
 
 ;; Generically, the title is given by the og:title meta tag
-(defmethod title ((s news--source) dom)
+(defmethod dsf-title ((s news--source) dom)
   (og-title dom))
 
 ;; Generically, most news sources don't have any tags
-(defmethod tags ((s news--source) dom)
+(defmethod dsf-tags ((s news--source) dom)
   nil)
 
 ;; get the ISO 8601 date-timestamp when the article was published
-(defmethod published ((s news--source) dom)
+(defmethod dsf-published ((s news--source) dom)
   (or (og-published dom)
       (dom-attr (dom-by-tag dom 'time) 'datetime)))
 
 (defvar dsf-registered-sources '()
   "A running list of the news sources registered by the program")
 
-(defun url->source (url)
+
+(defun dsf-url->source (url)
   "Produce a `news--source' object for the given URL"
   (let* ((host (url-domain url))
          (kv-pair (assoc host dsf-registered-sources)))
     (if kv-pair
-        (cdr kv-pair)
+        (cadr kv-pair)
       (news--source)))) ; defaults to generic news source
 
 (defconst afp-month-lookup '(("Jan" . 1) ("Feb" . 2) ("Mar" . 3)
@@ -503,23 +504,21 @@ usually aren't that good, though."
   (let* ((title-method (assoc :title methods))
          (tags-method (assoc :tags methods))
          (published-method (assoc :published methods)))
-    (list 'progn
-       (list 'defclass class-name '(news--source)
-         '())
+    (when (not (assoc domain dsf-registered-sources))
+      (list 'progn
+          `(defclass ,class-name (news--source)
+             ())
        (when title-method
-         `(defmethod title ((s ,class-name) ,@(cadr title-method))
+         `(defmethod dsf-title ((s ,class-name) ,@(cadr title-method))
            ,@(cddr title-method)))
        (when tags-method
-         `(defmethod tags ((s ,class-name) ,@(cadr tags-method))
+         `(defmethod dsf-tags ((s ,class-name) ,@(cadr tags-method))
            ,@(cddr tags-method)))
        (when published-method
-         `(defmethod published ((s ,class-name) ,@(cadr published-method))
-           ,@(cddr published-method)))
-       (when (not (assoc domain dsf-registered-sources))
-         `(push '(,domain . ,(make-instance class-name)) dsf-registered-sources)))))
-(macroexpand '(dsf-defsource reuters "reuters.com"
-                             ((:published (dommy)
-                                          (sailthru-date dommy)))))
+         `(defmethod dsf-published ((s ,class-name) ,@(cadr published-method))
+            ,@(cddr published-method)))
+       `(push `(,,domain ,(make-instance ,class-name))
+              dsf-registered-sources)))))
 
 (dsf-defsource rollcall "rollcall.com"
  ((:published (dom)
@@ -570,6 +569,10 @@ usually aren't that good, though."
                    "htitle")))
    (:published (dom) (afp/published dom))))
 
+(ert-deftest dsf-url->source-test ()
+  (should (washingtonpost-p (dsf-url->source "https://www.washingtonpost.com/news/post-politics/wp/2016/12/27/trump-names-bush-administration-veteran-thomas-bossert-to-white-house-homeland-security-post/?utm_term=.9cdc59ec3bd9"))))
+
+
 ;;; news article data
 ; code to create an object holding all the relevant information for a
 ; news article
@@ -595,7 +598,7 @@ usually aren't that good, though."
 (defun make-article (url)
   "Download the article, then parse out the relevant data"
   (download-article url)
-  (let* ((source (url->source url))
+  (let* ((source (dsf-url->source url))
          (file-path (concat news-dir
                             (url-domain url)
                             "/"
@@ -603,9 +606,9 @@ usually aren't that good, though."
          (dom (html-from-file file-path)))
     (news--article
      :url url
-     :title (title source dom)
-     :published (published source dom)
-     :tags (distinct (tags source dom)))))
+     :title (dsf-title source dom)
+     :published (dsf-published source dom)
+     :tags (distinct (dsf-tags source dom)))))
 
 (defun append-org-tags (tags)
   "When the given list of TAGS (strings) are not part of the current
@@ -632,6 +635,7 @@ the publication datetime."
             (if (oref article-object :published)
                 (concat " <" (oref article-object :published) ">")))
     ))
+
 
 ;;;### autoload
 (defun expand-citations ()
