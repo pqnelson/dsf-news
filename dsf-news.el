@@ -58,12 +58,28 @@
   (should (equal (url-domain "https://www.washingtonpost.com/news/post-politics/wp/2016/12/25/planned-parenthood-focus-groups-suggest-that-lack-of-attention-on-social-issues-helped-trump/?utm_term=.6bd1551fe0df")
                  "washingtonpost.com")))
 
+(defun dsf-download-filename (url)
+  (car (last (split-string (first (split-string url "?" t)) "/" t))))
+
+(ert-deftest dsf-download-filename-test ()
+  (should (equal (dsf-download-filename "https://www.washingtonpost.com/news/post-politics/wp/2016/12/25/planned-parenthood-focus-groups-suggest-that-lack-of-attention-on-social-issues-helped-trump/?utm_term=.6bd1551fe0df")
+                 "planned-parenthood-focus-groups-suggest-that-lack-of-attention-on-social-issues-helped-trump"))
+  (should (equal (dsf-download-filename "http://www.nytimes.com/2016/12/21/us/politics/kansas-republicans-democrats-elections.html")
+                 "kansas-republicans-democrats-elections.html"))
+  (should (equal (dsf-download-filename "http://www.reuters.com/article/us-china-defence-taiwan-idUSKBN14F061?utm_source=Sailthru&utm_medium=email&utm_campaign=New%20Campaign&utm_term=%2ASituation%20Report")
+                 "us-china-defence-taiwan-idUSKBN14F061")))
+
 (defun download-file (&optional url download-dir download-name)
   "Download a given URL into a DOWNLOAD-DIR (defaults to ~/downloads/).
 May rename the file using DOWNLOAD-NAME parameter."
   (interactive)
-  (let ((url (or url
-                 (read-string "Enter download URL: "))))
+  (let* ((url (or url
+                  (read-string "Enter download URL: ")))
+         (filename (or download-name
+                       (dsf-download-filename url)))
+         (buffer-name (concat (or download-dir
+                                  "~/downloads/")
+                              filename)))
     (let ((download-buffer (url-retrieve-synchronously url)))
       (save-excursion
         (set-buffer download-buffer)
@@ -72,10 +88,8 @@ May rename the file using DOWNLOAD-NAME parameter."
         (re-search-forward "^$" nil 'move)
         (forward-char)
         (delete-region (point-min) (point))
-        (write-file (concat (or download-dir
-                                "~/downloads/")
-                            (or download-name
-                                (car (last (split-string url "/" t))))))))))
+        (write-file buffer-name)))
+    (kill-buffer filename)))
 
 (defun download-article (url)
   "Downloads an article given the URL to `news-dir'. If the file
@@ -244,9 +258,10 @@ or a roman numeral -- no other suffixes are acceptable."
 
 (defun og-published (dom)
   (or (dom-attr (dom-elements dom 'property "article:published") 'content)
+      (dom-attr (dom-elements dom 'property "article:published_time") 'content)
       (dom-attr (dom-elements dom 'property "og:article:published_time") 'content)
       (dom-attr (dom-elements dom 'property "og:article:published") 'content)))
-      
+
 (defun sailthru-date (dom)
   (dom-attr (dom-elements dom 'name "sailthru.date")
             'content))
