@@ -37,30 +37,32 @@ alongside its other emacs. You'll have to [download it](https://github.com/emacs
 and stick it where Emacs can find it. (Ubuntu's Emacs 24 package
 contains `dom.el`'s dependencies, which is good.)
 
-# Peeking Under the Hood
+# Adding more news sources
 
-If you want to extend this to an arbitrary news source, there are 2
-things you need to do.
-
-## Step 1: Add a New Source Class for it
-
-We'll need to create a class that extends `news--source`:
+Adding a new source is easy now, there's a simple macro to use: `dsf-defsource`.
+It expects 3 arguments:
 
 ```elisp
-(defclass my-awesome-news-source (news--source)
-  ())
+(dsf-defsource <class-name> <domain>
+  <list-of-methods>)
 ```
 
-You'll also want to add custom methods for determining the article
-title, publication date, and optionally the tags.
-  
-## Step 2: Update `url->source`
+The list of methods handles `:title`, `:published`, and `:tags`. (If any
+are missing, it defaults to finding the `og:title` contents for the
+title, similar metadata for the published time, and `nil` for the tags.)
 
-To use the class we just designed, we need to update `url->source` to
-match on the domain, then return an instance of the news source class we
-just defined. I'm certain there's some fancy pants macro that
-would allow me to write a `(def-news-source ...)` macro, but I'm too
-lazy at the moment to do that.
+For example:
+
+```elisp
+(dsf-defsource economist "economist.com"
+  ((:published (dom)
+    (or (dom-attr (dom-by-tag dom 'time) 'datetime) ; published articles
+        (sailthru-date dom))))) ; blog articles
+```
+
+Under the hood, it handles modifying the `url->source` function, and
+uses the appropriate methods for determining (i) the publication date, 
+(ii) the article title, (iii) the tags, if any.
 
 # Lazy Usage
 

@@ -443,13 +443,19 @@ usually aren't that good, though."
       (push (string->tag (chomp (dom-text child))) match))
     match))
 
-;;; rollcall tags
-(defun rollcall/tags (dom)
+(defun csv->tags (dom meta-tag-name)
   (mapcar 'string->tag
-          (split-string (dom-attr (dom-elements dom 'name "news_keywords")
+          (split-string (dom-attr (dom-elements dom 'name meta-tag-name)
                                   'content)
                         ",")))
-  
+
+;;; rollcall tags
+(defun rollcall/tags (dom)
+  (csv->tags dom "news_keywords"))
+
+(defun wsj/tags (dom)
+  (csv->tags dom "keywords"))
+
 ;;; news source
 ; Dispatch the methods to determine the title, published date, etc.,
 ; based on the news source...which are implemented as subclasses of
@@ -457,86 +463,112 @@ usually aren't that good, though."
 (defclass news--source () ; No superclasses
   ())
 
-(defclass washingtonpost (news--source)
-  ())
-
-(defclass nytimes (news--source)
-  ())
-
-(defclass economist (news--source)
-  ())
-
-(defclass politico (news--source)
-  ())
-
-(defclass rollcall (news--source)
-  ())
-
-;; og:article:tag contains a comma seperated string list of tags for the article
-(defclass reuters (news--source)
-  ())
-
-(defclass afp (news--source)
-  ())
-
 ;; Generically, the title is given by the og:title meta tag
 (defmethod title ((s news--source) dom)
   (og-title dom))
 
-(defmethod title ((s afp) dom)
-  (dom-texts
-   (dom-elements (dom-by-tag dom 'h3)
-                 'class
-                 "htitle")))
-
 ;; Generically, most news sources don't have any tags
 (defmethod tags ((s news--source) dom)
   nil)
-
-(defmethod tags ((s nytimes) dom)
-  (mapcar 'nytimes.tag/normalize (nytimes/tags dom)))
-
-(defmethod tags ((s politico) dom)
-  (politico/tags dom))
-
-(defmethod tags ((s rollcall) dom)
-  (rollcall/tags dom))
 
 ;; get the ISO 8601 date-timestamp when the article was published
 (defmethod published ((s news--source) dom)
   (or (og-published dom)
       (dom-attr (dom-by-tag dom 'time) 'datetime)))
 
-(defmethod published ((s washingtonpost) dom)
-  (dom-attr (dom-elements dom 'itemprop "datePublished")
-            'content))
+(defvar dsf-registered-sources '()
+  "A running list of the news sources registered by the program")
 
-(defmethod published ((s economist) dom)
-  (or (dom-attr (dom-by-tag dom 'time) 'datetime) ; published articles
-      (sailthru-date dom))) ; blog articles
-
-(defmethod published ((s politico) dom)
-  (dom-attr (dom-by-tag dom 'time) 'datetime))
-
-(defmethod published ((s rollcall) dom)
-  (dom-attr (dom-elements dom 'property "article:published_time")
-            'content))
-
-(defmethod published ((s reuters) dom)
-  (sailthru-date dom))
+(defun url->source (url)
+  "Produce a `news--source' object for the given URL"
+  (let* ((host (url-domain url))
+         (kv-pair (assoc host dsf-registered-sources)))
+    (if kv-pair
+        (cdr kv-pair)
+      (news--source)))) ; defaults to generic news source
 
 (defconst afp-month-lookup '(("Jan" . 1) ("Feb" . 2) ("Mar" . 3)
                              ("Apr" . 4) ("May" . 5) ("June" . 6)
                              ("July" . 7) ("Aug" . 8) ("Sep" . 9)
                              ("Oct" . 10) ("Nov" . 11) ("Dec" . 12)))
 
-(defmethod published ((s afp) dom)
+(defun afp/published (dom)
   (concat (dom-text (dom-by-class dom 'y))
           "-"
-          (alist-get (dom-text (dom-by-class dom 'm)) afp-month-lookup)
+          (cdr (assoc (dom-text (dom-by-class dom 'm)) afp-month-lookup))
           "-"
           (dom-text (dom-by-class dom 'd))))
 
+(defmacro dsf-defsource (class-name domain methods)
+  (let* ((title-method (assoc :title methods))
+         (tags-method (assoc :tags methods))
+         (published-method (assoc :published methods)))
+    (list 'progn
+       (list 'defclass class-name '(news--source)
+         '())
+       (when title-method
+         `(defmethod title ((s ,class-name) ,@(cadr title-method))
+           ,@(cddr title-method)))
+       (when tags-method
+         `(defmethod tags ((s ,class-name) ,@(cadr tags-method))
+           ,@(cddr tags-method)))
+       (when published-method
+         `(defmethod published ((s ,class-name) ,@(cadr published-method))
+           ,@(cddr published-method)))
+       (when (not (assoc domain dsf-registered-sources))
+         `(push '(,domain . ,(make-instance class-name)) dsf-registered-sources)))))
+(macroexpand '(dsf-defsource reuters "reuters.com"
+                             ((:published (dommy)
+                                          (sailthru-date dommy)))))
+
+(dsf-defsource rollcall "rollcall.com"
+ ((:published (dom)
+   (dom-attr (dom-elements dom 'property "article:published_time")
+             'content))
+  (:tags (dom) (rollcall/tags dom))))
+
+
+(dsf-defsource nytimes "nytimes.com"
+  ((:tags (dom)
+    (mapcar 'nytimes.tag/normalize (nytimes/tags dom)))))
+
+(dsf-defsource economist "economist.com"
+  ((:published (dom)
+    (or (dom-attr (dom-by-tag dom 'time) 'datetime) ; published articles
+        (sailthru-date dom))))) ; blog articles
+
+(dsf-defsource politico "politico.com"
+  ((:published (dom)
+    (dom-attr (dom-by-tag dom 'time) 'datetime))               
+   (:tags (dom)
+    (politico/tags dom))))
+
+; og:article:tag contains a comma seperated string list of tags for the article
+(dsf-defsource reuters "reuters.com"
+  ((:published (dom)
+    (sailthru-date dom))))
+
+(dsf-defsource washingtonpost "washingtonpost.com"
+  ((:published (dom)
+    (dom-attr (dom-elements dom 'itemprop "datePublished")
+              'content))))
+
+(dsf-defsource wsj "wsj.com"
+  ((:title (dom) 
+    (dom-attr (dom-elements dom 'name "article.headline")
+              'content))
+   (:tags (dom) (wsj/tags dom))
+   (:published (dom)
+    (dom-attr (dom-elements dom 'name "article.published")
+              'content))))
+
+(dsf-defsource afp "afp.com"
+  ((:title (dom)
+    (dom-texts
+     (dom-elements (dom-by-tag dom 'h3)
+                   'class
+                   "htitle")))
+   (:published (dom) (afp/published dom))))
 
 ;;; news article data
 ; code to create an object holding all the relevant information for a
@@ -559,17 +591,6 @@ usually aren't that good, though."
     :initform nil
     :documentation "Tags the publication assigns to the article; right
   now, it is just a list of strings")))
-
-(defun url->source (url)
-  "Produce a `news--source' object for the given URL"
-  (let* ((host (url-domain url)))
-    (cond ((equal "washingtonpost.com" host) (washingtonpost))
-          ((equal "nytimes.com" host) (nytimes))
-          ((equal "economist.com" host) (economist))
-          ((equal "politico.com" host) (politico))
-          ((equal "rollcall.com" host) (rollcall))
-          ((equal "reuters.com" host) (reuters))
-          (t (news--source)))))
 
 (defun make-article (url)
   "Download the article, then parse out the relevant data"
