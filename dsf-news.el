@@ -243,8 +243,10 @@ or a roman numeral -- no other suffixes are acceptable."
   (dom-attr (dom-elements dom 'property "og:title") 'content))
 
 (defun og-published (dom)
-  (dom-attr (dom-elements dom 'property "article:published") 'content))
-
+  (or (dom-attr (dom-elements dom 'property "article:published") 'content)
+      (dom-attr (dom-elements dom 'property "og:article:published_time") 'content)
+      (dom-attr (dom-elements dom 'property "og:article:published") 'content)))
+      
 (defun sailthru-date (dom)
   (dom-attr (dom-elements dom 'name "sailthru.date")
             'content))
@@ -287,7 +289,7 @@ usually aren't that good, though."
                  "Apple")))
 
 (defun nytimes.person/name-parts (s)
-  (let ((start-idx (index-of "," s)))
+  (let ((start-idx (string-index-of "," s)))
     (if start-idx
         (chomp (substring s (1+ start-idx))))))
 
@@ -317,10 +319,15 @@ usually aren't that good, though."
 
 (defun nytimes.person/middle-initial (name-parts)
   (let* ((space-idx (string-index-of " " name-parts))
-         (idx (if space-idx
-                  (+ space-idx
-                     (string-index-of "." (substring name-parts space-idx)))
-                (string-index-of "." idx))))
+         (period-idx (string-index-of "."
+                                      (if space-idx
+                                          (substring name-parts
+                                                     space-idx)
+                                        name-parts)))
+         (idx (when period-idx
+                (if space-idx
+                    (+ space-idx period-idx)
+                  period-idx))))
     (if idx
         (substring name-parts (1- idx) (1+ idx)))))
 
@@ -330,10 +337,12 @@ usually aren't that good, though."
   (should (equal (nytimes.person/middle-initial "R. W. Jr.")
                  "W."))
   (should (equal (nytimes.person/middle-initial "bar c.")
-                 "c.")))
+                 "c."))
+  (should (equal (nytimes.person/middle-initial "Richard Milhous")
+                 nil)))
 
 (defun nytimes.person/suffix (name-parts)
-  (let* ((period-idx (index-of "." name-parts))
+  (let* ((period-idx (string-index-of "." name-parts))
          (idx (last-index-of " " name-parts)))
     (if (and idx
              (or (and (numberp period-idx)
@@ -350,6 +359,8 @@ usually aren't that good, though."
   (should (equal (nytimes.person/suffix "Bar Sr")
                  "Sr."))
   (should (equal (nytimes.person/suffix "Bar C.")
+                 nil))
+  (should (equal (nytimes.person/suffix "Richard Milhous")
                  nil)))
 
 (defun nytimes-person-tag-cleanup (s)
@@ -368,7 +379,10 @@ usually aren't that good, though."
 
 (ert-deftest nytimes-person-tag-cleanup-test ()
   (should (equal (nytimes-person-tag-cleanup "Apple, R. W. Jr")
-                 "R W. Apple Jr.")))
+                 "R W. Apple Jr."))
+  (should (equal (nytimes-person-tag-cleanup "Nixon, Richard Milhous")
+                 "Richard Milhous Nixon")))
+;;  "Trump, Donald J" "Houston (Tex)" "Restaurants" "United States Politics and Government")
 
 (defun firm-suffix? (s)
   (or (string-suffix-p "Inc." s)
@@ -403,9 +417,10 @@ usually aren't that good, though."
                  nil)))
 
 (defun nytimes.tag/normalize (s)
-  (if (nytimes.tag/person? s)
-      (nytimes-person-tag-cleanup s)
-    s))
+  (string->tag
+   (if (nytimes.tag/person? s)
+       (nytimes-person-tag-cleanup s)
+     s)))
 
 (defun nytimes.tag/keyword (s)
   (string->keyword
@@ -434,8 +449,6 @@ usually aren't that good, though."
           (split-string (dom-attr (dom-elements dom 'name "news_keywords")
                                   'content)
                         ",")))
-
-(rollcall/tags (html-from-file "~/news/rollcall.com/foreign-relations-divided-tillerson-tax-returns"))
   
 ;;; news source
 ; Dispatch the methods to determine the title, published date, etc.,
@@ -459,9 +472,22 @@ usually aren't that good, though."
 (defclass rollcall (news--source)
   ())
 
+;; og:article:tag contains a comma seperated string list of tags for the article
+(defclass reuters (news--source)
+  ())
+
+(defclass afp (news--source)
+  ())
+
 ;; Generically, the title is given by the og:title meta tag
 (defmethod title ((s news--source) dom)
   (og-title dom))
+
+(defmethod title ((s afp) dom)
+  (dom-texts
+   (dom-elements (dom-by-tag dom 'h3)
+                 'class
+                 "htitle")))
 
 ;; Generically, most news sources don't have any tags
 (defmethod tags ((s news--source) dom)
@@ -486,7 +512,8 @@ usually aren't that good, though."
             'content))
 
 (defmethod published ((s economist) dom)
-  (sailthru-date dom))
+  (or (dom-attr (dom-by-tag dom 'time) 'datetime) ; published articles
+      (sailthru-date dom))) ; blog articles
 
 (defmethod published ((s politico) dom)
   (dom-attr (dom-by-tag dom 'time) 'datetime))
@@ -494,6 +521,22 @@ usually aren't that good, though."
 (defmethod published ((s rollcall) dom)
   (dom-attr (dom-elements dom 'property "article:published_time")
             'content))
+
+(defmethod published ((s reuters) dom)
+  (sailthru-date dom))
+
+(defconst afp-month-lookup '(("Jan" . 1) ("Feb" . 2) ("Mar" . 3)
+                             ("Apr" . 4) ("May" . 5) ("June" . 6)
+                             ("July" . 7) ("Aug" . 8) ("Sep" . 9)
+                             ("Oct" . 10) ("Nov" . 11) ("Dec" . 12)))
+
+(defmethod published ((s afp) dom)
+  (concat (dom-text (dom-by-class dom 'y))
+          "-"
+          (alist-get (dom-text (dom-by-class dom 'm)) afp-month-lookup)
+          "-"
+          (dom-text (dom-by-class dom 'd))))
+
 
 ;;; news article data
 ; code to create an object holding all the relevant information for a
@@ -525,6 +568,7 @@ usually aren't that good, though."
           ((equal "economist.com" host) (economist))
           ((equal "politico.com" host) (politico))
           ((equal "rollcall.com" host) (rollcall))
+          ((equal "reuters.com" host) (reuters))
           (t (news--source)))))
 
 (defun make-article (url)
