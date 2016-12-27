@@ -40,10 +40,10 @@ contains `dom.el`'s dependencies, which is good.)
 # Adding more news sources
 
 Adding a new source is easy now, there's a simple macro to use: `dsf-defsource`.
-It expects 3 arguments:
+It expects 2 arguments:
 
 ```elisp
-(dsf-defsource <class-name> <domain>
+(dsf-defsource <domain>
   <list-of-methods>)
 ```
 
@@ -54,7 +54,7 @@ title, similar metadata for the published time, and `nil` for the tags.)
 For example:
 
 ```elisp
-(dsf-defsource economist "economist.com"
+(dsf-defsource "economist.com"
   ((:published (dom)
     (or (dom-attr (dom-by-tag dom 'time) 'datetime) ; published articles
         (sailthru-date dom))))) ; blog articles

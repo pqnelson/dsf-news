@@ -500,10 +500,11 @@ usually aren't that good, though."
           "-"
           (dom-text (dom-by-class dom 'd))))
 
-(defmacro dsf-defsource (class-name domain methods)
+(defmacro dsf-defsource (domain methods)
   (let* ((title-method (assoc :title methods))
          (tags-method (assoc :tags methods))
-         (published-method (assoc :published methods)))
+         (published-method (assoc :published methods))
+         (class-name (make-symbol domain)))
     (when (not (assoc domain dsf-registered-sources))
       (list 'progn
           `(defclass ,class-name (news--source)
@@ -520,39 +521,39 @@ usually aren't that good, though."
        `(push `(,,domain ,(make-instance ,class-name))
               dsf-registered-sources)))))
 
-(dsf-defsource rollcall "rollcall.com"
+(dsf-defsource "rollcall.com"
  ((:published (dom)
    (dom-attr (dom-elements dom 'property "article:published_time")
              'content))
   (:tags (dom) (rollcall/tags dom))))
 
 
-(dsf-defsource nytimes "nytimes.com"
+(dsf-defsource "nytimes.com"
   ((:tags (dom)
     (mapcar 'nytimes.tag/normalize (nytimes/tags dom)))))
 
-(dsf-defsource economist "economist.com"
+(dsf-defsource "economist.com"
   ((:published (dom)
     (or (dom-attr (dom-by-tag dom 'time) 'datetime) ; published articles
         (sailthru-date dom))))) ; blog articles
 
-(dsf-defsource politico "politico.com"
+(dsf-defsource "politico.com"
   ((:published (dom)
     (dom-attr (dom-by-tag dom 'time) 'datetime))               
    (:tags (dom)
     (politico/tags dom))))
 
 ; og:article:tag contains a comma seperated string list of tags for the article
-(dsf-defsource reuters "reuters.com"
+(dsf-defsource "reuters.com"
   ((:published (dom)
     (sailthru-date dom))))
 
-(dsf-defsource washingtonpost "washingtonpost.com"
+(dsf-defsource "washingtonpost.com"
   ((:published (dom)
     (dom-attr (dom-elements dom 'itemprop "datePublished")
               'content))))
 
-(dsf-defsource wsj "wsj.com"
+(dsf-defsource "wsj.com"
   ((:title (dom) 
     (dom-attr (dom-elements dom 'name "article.headline")
               'content))
@@ -561,7 +562,7 @@ usually aren't that good, though."
     (dom-attr (dom-elements dom 'name "article.published")
               'content))))
 
-(dsf-defsource afp "afp.com"
+(dsf-defsource "afp.com"
   ((:title (dom)
     (dom-texts
      (dom-elements (dom-by-tag dom 'h3)
@@ -570,7 +571,7 @@ usually aren't that good, though."
    (:published (dom) (afp/published dom))))
 
 (ert-deftest dsf-url->source-test ()
-  (should (washingtonpost-p (dsf-url->source "https://www.washingtonpost.com/news/post-politics/wp/2016/12/27/trump-names-bush-administration-veteran-thomas-bossert-to-white-house-homeland-security-post/?utm_term=.9cdc59ec3bd9"))))
+  (should (washingtonpost.com-p (dsf-url->source "https://www.washingtonpost.com/news/post-politics/wp/2016/12/27/trump-names-bush-administration-veteran-thomas-bossert-to-white-house-homeland-security-post/?utm_term=.9cdc59ec3bd9"))))
 
 
 ;;; news article data
