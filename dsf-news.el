@@ -626,19 +626,33 @@ usually aren't that good, though."
      :published (dsf-published source dom)
      :tags (distinct (dsf-tags source dom)))))
 
+(defun dsf-remove-inherited-tags (tags all-tags)
+  (if (null all-tags)
+      tags
+    (dsf-remove-inherited-tags (remove (car all-tags) tags)
+                               (cdr all-tags))))
+
+(ert-deftest dsf-remove-inherited-tags-test ()
+  (should (equal (dsf-remove-inherited-tags
+                  '("donald_trump" "national_security")
+                  '("donald_trump"))
+                 '("national_security"))))
+
 (defun append-org-tags (tags)
   "When the given list of TAGS (strings) are not part of the current
-header's tags, append the distinct tags on, then alphebatically sort
-them all."
+header's tags (local and inherited), append the distinct tags on, then
+alphebatically sort them all."
   (when tags
     (save-excursion
       (org-back-to-heading)
-      (let* ((current-tags (org-element-property :tags (org-element-at-point))))
-        (when (not (subset? tags current-tags))
+      (let* ((all-tags (org-get-tags-at))
+             (current-tags (org-element-property :tags (org-element-at-point)))
+             (new-tags (dsf-remove-inherited-tags tags all-tags)))
+        (when (not (subset? new-tags current-tags))
           (org-set-tags-to
            (sort
             (distinct (append current-tags
-                              tags))
+                              new-tags))
             'dictionary-lessp)))))))
 
 (defun cite-article (url)
@@ -651,7 +665,6 @@ the publication datetime."
             (if (oref article-object :published)
                 (concat " <" (oref article-object :published) ">")))
     ))
-
 
 ;;;### autoload
 (defun expand-citations ()
